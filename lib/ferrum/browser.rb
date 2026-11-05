@@ -235,15 +235,17 @@ module Ferrum
       client, process, contexts = @client, @process, @contexts
       @client = @process = @contexts = nil
 
+      thread = nil
       begin
         contexts&.close_connections
       ensure
         begin
           client&.close
         ensure
-          process&.stop(wait: wait)
+          thread = process&.stop(wait: wait)
         end
       end
+      thread
     end
 
     #
