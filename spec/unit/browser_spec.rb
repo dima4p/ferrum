@@ -68,6 +68,7 @@ describe Ferrum::Browser do
   end
 end
 
+describe Ferrum::Browser do
   describe "#quit" do
     it "stops the process when closing context connections raises" do
       error = StandardError.new("context cleanup failed")
