@@ -132,3 +132,4 @@ describe Ferrum::Client do
       expect(websocket).to have_received(:force_close)
     end
   end
+end

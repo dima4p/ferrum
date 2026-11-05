@@ -106,3 +106,4 @@ describe Ferrum::Browser do
       expect(process).to have_received(:stop).with(wait: true)
     end
   end
+end
