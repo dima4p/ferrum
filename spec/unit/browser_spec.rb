@@ -67,3 +67,41 @@ describe Ferrum::Browser do
     end
   end
 end
+
+  describe "#quit" do
+    it "stops the process when closing context connections raises" do
+      error = StandardError.new("context cleanup failed")
+      contexts = double(close_connections: nil)
+      client = double(close: nil)
+      process = double(stop: nil)
+      browser = described_class.allocate
+      browser.instance_variable_set(:@contexts, contexts)
+      browser.instance_variable_set(:@client, client)
+      browser.instance_variable_set(:@process, process)
+      allow(contexts).to receive(:close_connections).and_raise(error)
+
+      expect { browser.quit }.to raise_error(error)
+
+      expect(client).to have_received(:close)
+      expect(process).to have_received(:stop).with(wait: true)
+      expect(browser.client).to be_nil
+      expect(browser.process).to be_nil
+      expect(browser.contexts).to be_nil
+    end
+
+    it "stops the process when closing the client raises" do
+      error = StandardError.new("client cleanup failed")
+      contexts = double(close_connections: nil)
+      client = double
+      process = double(stop: nil)
+      browser = described_class.allocate
+      browser.instance_variable_set(:@contexts, contexts)
+      browser.instance_variable_set(:@client, client)
+      browser.instance_variable_set(:@process, process)
+      allow(client).to receive(:close).and_raise(error)
+
+      expect { browser.quit }.to raise_error(error)
+
+      expect(process).to have_received(:stop).with(wait: true)
+    end
+  end

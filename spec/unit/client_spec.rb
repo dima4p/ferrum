@@ -111,3 +111,22 @@ describe Ferrum::Client do
     end
   end
 end
+
+  describe "#close" do
+    it "force closes the websocket when the close handshake raises" do
+      error = StandardError.new("websocket close failed")
+      websocket = double(force_close: nil)
+      allow(websocket).to receive(:close).and_raise(error)
+      thread = double(join: true)
+      subscriber = double(close: nil)
+      client.instance_variable_set(:@ws, websocket)
+      client.instance_variable_set(:@pendings, Concurrent::Hash.new)
+      client.instance_variable_set(:@thread, thread)
+      client.instance_variable_set(:@subscriber, subscriber)
+
+      expect { client.close }.to raise_error(error)
+
+      expect(subscriber).to have_received(:close)
+      expect(websocket).to have_received(:force_close)
+    end
+  end
