@@ -30,6 +30,7 @@
   `go_to` instead
 
 ### Fixed
+- WebSocket connections now close their local socket and writer when the peer disconnects unexpectedly
 - Chromium's Linux temporary files now live inside each browser's Ferrum user-data directory and are removed with it
 - `Browser#quit` and `Client#close` continue cleanup when an earlier close step raises
 - `evaluate` raised `NoMethodError` when a node inside a `Map` or `Set` was also referenced elsewhere in the result
