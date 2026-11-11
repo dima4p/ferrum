@@ -30,7 +30,7 @@
   `go_to` instead
 
 ### Fixed
-- Unquit browsers close their CDP connections and stop their browser process when garbage-collected
+- Avoid thread-dependent CDP cleanup from a garbage-collection finalizer; explicit `Browser#quit` closes the connection, while the process finalizer remains responsible for stopping an unquit locally spawned browser
 - WebSocket connections now close their local socket and writer when the peer disconnects unexpectedly
 - Chromium's Linux temporary files now live inside each browser's Ferrum user-data directory and are removed with it
 - `Browser#quit` and `Client#close` continue cleanup when an earlier close step raises
