@@ -32,11 +32,18 @@ describe Ferrum::Page do
     end
 
     context "with failing response" do
-      it "handles navigation error" do
-        expect { page.go_to("http://nope:#{port}/") }.to raise_error(
+      it "handles navigation error", :launch do
+        browser = Ferrum::Browser.new(
+          base_url: base_url,
+          browser_options: { "host-resolver-rules" => "MAP nope ~NOTFOUND" }
+        )
+
+        expect { browser.go_to("http://nope:#{port}/") }.to raise_error(
           Ferrum::StatusError,
           %r{Request to http://nope:\d+/ failed \(net::ERR_NAME_NOT_RESOLVED\)}
         )
+      ensure
+        browser&.quit
       end
 
       it "reports pending connection for image" do
