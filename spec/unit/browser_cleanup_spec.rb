@@ -65,8 +65,9 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     end
   end
 
-  # Read /proc while the browser is still alive. This records descendants even
-  # if Chromium later reparents them or they move into another process group.
+  # Read /proc while the browser is still alive. Capture the process tree,
+  # members of Chromium's original process group, and processes carrying this
+  # browser's user-data path. The latter two also catch reparented processes.
   def process_snapshot
     Dir.glob("/proc/[0-9]*/stat").filter_map do |path|
       stat = File.read(path)
@@ -86,7 +87,7 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     end
   end
 
-  def process_tree_snapshot(root_pid)
+  def process_tree_snapshot(root_pid, user_data_dir = nil)
     table = process_snapshot
     by_ppid = table.group_by { |process| process[:ppid] }
     descendants = []
@@ -104,7 +105,11 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     end
 
     root = table.find { |process| process[:pid] == root_pid }
-    [root, *descendants].compact.uniq { |process| process[:pid] }
+    related = table.select do |process|
+      process[:pgid] == root_pid ||
+        (user_data_dir && process[:command].include?(user_data_dir))
+    end
+    [root, *descendants, *related].compact.uniq { |process| process[:pid] }
   end
 
   # Match PID and start time to avoid mistaking a reused PID for the original
@@ -181,11 +186,16 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
   end
 
   describe "Browser#quit" do
-    it "terminates Chromium and its child processes" do
+    it "terminates Chromium and all of its child processes" do
       resources = start_browser_and_capture_resources
+      captured = process_tree_snapshot(resources[:pid], resources[:user_data_dir])
+      resources[:captured_processes] = captured
       resources[:browser].quit
-      expect(process_alive?(resources[:pid])).to be(false)
-      expect(process_group_alive?(resources[:pid])).to be(false)
+
+      wait_for_cleanup { surviving_processes(captured).empty? }
+      remaining = surviving_processes(captured)
+      expect(remaining).to be_empty,
+        "Chromium processes survived Browser#quit: #{remaining.inspect}"
     ensure
       cleanup_resources(resources)
     end
@@ -193,6 +203,8 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     it "removes the Ferrum user data directory" do
       resources = start_browser_and_capture_resources
       resources[:browser].quit
+
+      wait_for_cleanup { !Dir.exist?(resources[:user_data_dir]) }
       expect(Dir.exist?(resources[:user_data_dir])).to be(false)
     ensure
       cleanup_resources(resources)
