@@ -1,25 +1,35 @@
 # frozen_string_literal: true
 
 describe Ferrum::Browser, "GC cleanup", if: Ferrum::Utils::Platform.mri? && !Ferrum::Utils::Platform.windows? do
-  it "reproduces the WebSocket and subscriber thread leak after browser GC" do
-    browser = described_class.new
+  def start_browser_and_capture_resources
+    browser = Ferrum::Browser.new
     process = browser.process
     client = browser.client
     web_socket = client.instance_variable_get(:@ws)
+    subscriber = client.subscriber
+
     socket = web_socket.instance_variable_get(:@sock)
     reader = web_socket.instance_variable_get(:@thread)
     writer = web_socket.instance_variable_get(:@writer)
-    subscriber = client.subscriber
     subscriber_threads = %i[@regular_thread @priority_thread].map do |name|
       subscriber.instance_variable_get(name)
     end
-    user_data_dir = process.instance_variable_get(:@user_data_dir)
-    pid = process.pid
 
-    # Keep references to the resources under test, but release Browser,
-    # Process, and Client so the Process finalizer can run.
-    browser = process = client = web_socket = subscriber = nil
+    [
+      socket,
+      reader,
+      writer,
+      subscriber_threads,
+      process.instance_variable_get(:@user_data_dir),
+      process.pid
+    ]
+  end
 
+  it "reproduces the WebSocket and subscriber thread leak after browser GC" do
+    socket, reader, writer, subscriber_threads, user_data_dir, pid = start_browser_and_capture_resources
+
+    # The helper has returned, so Browser, Process, and Client are no longer
+    # referenced. Keep only the resources whose cleanup is under test.
     deadline = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) + 10
     GC.start
     until !Dir.exist?(user_data_dir) && !reader.alive?
@@ -34,12 +44,6 @@ describe Ferrum::Browser, "GC cleanup", if: Ferrum::Utils::Platform.mri? && !Fer
     expect(writer).to be_alive
     expect(subscriber_threads).to all(be_alive)
   ensure
-    begin
-      browser&.quit
-    rescue StandardError
-      nil
-    end
-
     begin
       ::Process.kill("KILL", -pid) if pid
     rescue Errno::ESRCH
