@@ -186,6 +186,56 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     FileUtils.remove_entry(user_data_dir) if user_data_dir && Dir.exist?(user_data_dir)
   end
 
+  describe "process-group cleanup after the leader was reaped" do
+    it "kills remaining Chromium children when Process.wait raises ECHILD" do
+      reader, writer = IO.pipe
+      script = <<~'RUBY'
+        reader = IO.for_fd(ARGV[0].to_i)
+        writer = IO.for_fd(ARGV[1].to_i)
+        Signal.trap("TERM") { exit! }
+        child = fork do
+          reader.close
+          Signal.trap("TERM", "IGNORE")
+          writer.write("#{Process.pid}\n")
+          writer.flush
+          writer.close
+          sleep
+        end
+        writer.close
+        sleep
+      RUBY
+      reader.close_on_exec = false
+      writer.close_on_exec = false
+      pid = ::Process.spawn(RbConfig.ruby, "-e", script, reader.fileno.to_s, writer.fileno.to_s,
+        pgroup: true, close_others: false, in: File::NULL, out: File::NULL, err: File::NULL)
+      writer.close
+      child_pid = Integer(reader.gets)
+      reader.close
+
+      ::Process.kill("TERM", pid)
+      ::Process.wait(pid)
+      expect(process_alive?(child_pid)).to be(true)
+
+      Ferrum::Browser::Process::Killer.kill(pid)
+
+      wait_for_cleanup { !process_alive?(child_pid) }
+      expect(process_group_alive?(pid)).to be(false)
+    ensure
+      reader&.close unless reader&.closed?
+      writer&.close unless writer&.closed?
+      begin
+        ::Process.kill("KILL", -pid) if pid
+      rescue Errno::ESRCH
+        nil
+      end
+      begin
+        ::Process.wait(pid) if pid
+      rescue Errno::ECHILD, Errno::ESRCH
+        nil
+      end
+    end
+  end
+
   describe "Browser#quit" do
     it "terminates Chromium and all of its child processes" do
       resources = start_browser_and_capture_resources
@@ -272,56 +322,6 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
 
       expect(failures).to be_empty,
         "Browser#quit left resources behind during stress run: #{failures.inspect}"
-    end
-  end
-
-  describe "process-group cleanup after the leader was reaped" do
-    it "kills remaining Chromium children when Process.wait raises ECHILD" do
-      reader, writer = IO.pipe
-      script = <<~'RUBY'
-        reader = IO.for_fd(ARGV[0].to_i)
-        writer = IO.for_fd(ARGV[1].to_i)
-        Signal.trap("TERM") { exit! }
-        child = fork do
-          reader.close
-          Signal.trap("TERM", "IGNORE")
-          writer.write("#{Process.pid}\n")
-          writer.flush
-          writer.close
-          sleep
-        end
-        writer.close
-        sleep
-      RUBY
-      reader.close_on_exec = false
-      writer.close_on_exec = false
-      pid = ::Process.spawn(RbConfig.ruby, "-e", script, reader.fileno.to_s, writer.fileno.to_s,
-        pgroup: true, close_others: false, in: File::NULL, out: File::NULL, err: File::NULL)
-      writer.close
-      child_pid = Integer(reader.gets)
-      reader.close
-
-      ::Process.kill("TERM", pid)
-      ::Process.wait(pid)
-      expect(process_alive?(child_pid)).to be(true)
-
-      Ferrum::Browser::Process::Killer.kill(pid)
-
-      wait_for_cleanup { !process_alive?(child_pid) }
-      expect(process_group_alive?(pid)).to be(false)
-    ensure
-      reader&.close unless reader&.closed?
-      writer&.close unless writer&.closed?
-      begin
-        ::Process.kill("KILL", -pid) if pid
-      rescue Errno::ESRCH
-        nil
-      end
-      begin
-        ::Process.wait(pid) if pid
-      rescue Errno::ECHILD, Errno::ESRCH
-        nil
-      end
     end
   end
 
