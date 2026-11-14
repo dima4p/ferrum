@@ -235,7 +235,7 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     end
 
     it "reliably terminates Chromium and removes its user data directory across repeated browser lifecycles" do
-      iterations = Integer(ENV.fetch("FERRUM_CLEANUP_STRESS_ITERATIONS", "100"))
+      iterations = Integer(ENV.fetch("FERRUM_CLEANUP_STRESS_ITERATIONS", "200"))
       failures = []
 
       iterations.times do |index|
@@ -354,7 +354,7 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     end
 
     it "does not leave Chromium processes behind across repeated browser GC cycles" do
-      iterations = Integer(ENV.fetch("FERRUM_CLEANUP_STRESS_ITERATIONS", "55"))
+      iterations = Integer(ENV.fetch("FERRUM_CLEANUP_STRESS_ITERATIONS", "200"))
       leftovers = []
 
       iterations.times do |index|
