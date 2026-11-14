@@ -3,7 +3,7 @@
 require "tmpdir"
 
 describe Ferrum::Browser, "cleanup lifecycle", :launch,
-  if: Ferrum::Utils::Platform.mri? && !Ferrum::Utils::Platform.windows? do
+  if: Ferrum::Utils::Platform.mri? && Ferrum::Utils::Platform.platform_name == :linux do
   def start_browser_and_capture_resources
     chromium_temp_dirs_before = Dir.glob(File.join(Dir.tmpdir, "org.chromium.Chromium.*"))
     browser = Ferrum::Browser.new
@@ -48,21 +48,21 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     end
   end
 
-  def process_alive?(pid)
-    ::Process.kill(0, pid)
-    true
-  rescue Errno::ESRCH
-    false
-  end
-
-  def process_group_pids(pgid)
-    return [] unless File.directory?("/proc")
-
+  def process_group_snapshot(pgid)
     Dir.glob("/proc/[0-9]*/stat").filter_map do |path|
       stat = File.read(path)
       fields = stat[(stat.rindex(") ") + 2)..].split
+      next unless fields[2].to_i == pgid
+
       pid = File.basename(File.dirname(path)).to_i
-      pid if fields[2].to_i == pgid
+      cmdline = File.read("/proc/#{pid}/cmdline").tr("\0", " ").strip
+      {
+        pid: pid,
+        state: fields[0],
+        ppid: fields[1].to_i,
+        pgid: fields[2].to_i,
+        command: cmdline
+      }
     rescue Errno::ENOENT, Errno::ESRCH
       nil
     end
@@ -125,8 +125,8 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
         pid = resources[:pid]
         resources[:browser].quit
 
-        remaining = process_group_pids(pid)
-        leftovers << { iteration: index + 1, browser_pid: pid, remaining_pids: remaining } unless remaining.empty?
+        remaining = process_group_snapshot(pid)
+        leftovers << { iteration: index + 1, browser_pid: pid, processes: remaining } unless remaining.empty?
       ensure
         cleanup_resources(resources)
       end
