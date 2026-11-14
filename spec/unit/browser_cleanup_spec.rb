@@ -37,6 +37,20 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     }
   end
 
+  def process_alive?(pid)
+    ::Process.kill(0, pid)
+    true
+  rescue Errno::ESRCH
+    false
+  end
+
+  def process_group_alive?(pid)
+    ::Process.kill(0, -pid)
+    true
+  rescue Errno::ESRCH
+    false
+  end
+
   def wait_for_cleanup(timeout: 15)
     deadline = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) + timeout
     until yield
