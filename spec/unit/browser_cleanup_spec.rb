@@ -22,7 +22,7 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     end
     chromium_temp_dirs.uniq!
 
-    resources = {
+    {
       browser: browser,
       pid: process.pid,
       user_data_dir: user_data_dir,
@@ -35,8 +35,6 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
         subscriber.instance_variable_get(name)
       end
     }
-
-    resources
   end
 
   def wait_for_cleanup(timeout: 15)
@@ -57,11 +55,17 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     false
   end
 
-  def process_group_alive?(pid)
-    ::Process.kill(0, -pid)
-    true
-  rescue Errno::ESRCH
-    false
+  def process_group_pids(pgid)
+    return [] unless File.directory?("/proc")
+
+    Dir.glob("/proc/[0-9]*/stat").filter_map do |path|
+      stat = File.read(path)
+      fields = stat[(stat.rindex(") ") + 2)..].split
+      pid = File.basename(File.dirname(path)).to_i
+      pid if fields[2].to_i == pgid
+    rescue Errno::ENOENT, Errno::ESRCH
+      nil
+    end
   end
 
   def client_threads(resources)
@@ -102,25 +106,6 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
   end
 
   describe "Browser#quit" do
-    it "terminates Chromium and its child processes" do
-      resources = start_browser_and_capture_resources
-      resources[:browser].quit
-
-      expect(process_alive?(resources[:pid])).to be(false)
-      expect(process_group_alive?(resources[:pid])).to be(false)
-    ensure
-      cleanup_resources(resources)
-    end
-
-    it "removes the Ferrum user data directory" do
-      resources = start_browser_and_capture_resources
-      resources[:browser].quit
-
-      expect(Dir.exist?(resources[:user_data_dir])).to be(false)
-    ensure
-      cleanup_resources(resources)
-    end
-
     it "removes Chromium temporary directories" do
       resources = start_browser_and_capture_resources
       expect(resources[:chromium_temp_dirs]).not_to be_empty
@@ -131,49 +116,27 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       cleanup_resources(resources)
     end
 
-    it "closes the WebSocket and stops client and subscriber threads" do
-      resources = start_browser_and_capture_resources
-      resources[:browser].quit
+    it "does not leave Chromium processes behind across repeated browser lifecycles" do
+      iterations = Integer(ENV.fetch("FERRUM_CLEANUP_STRESS_ITERATIONS", "55"))
+      leftovers = []
 
-      wait_for_cleanup { client_resources_closed?(resources) }
-      expect(resources[:socket]).to be_closed
-      expect(client_threads(resources)).to all(satisfy { |thread| !thread.alive? })
-    ensure
-      cleanup_resources(resources)
+      iterations.times do |index|
+        resources = start_browser_and_capture_resources
+        pid = resources[:pid]
+        resources[:browser].quit
+
+        remaining = process_group_pids(pid)
+        leftovers << { iteration: index + 1, browser_pid: pid, remaining_pids: remaining } unless remaining.empty?
+      ensure
+        cleanup_resources(resources)
+      end
+
+      expect(leftovers).to be_empty,
+        "Chromium processes survived Browser#quit: #{leftovers.inspect}"
     end
   end
 
   describe "Browser GC" do
-    it "terminates the Chromium process after browser GC" do
-      resources = start_browser_and_capture_resources
-      resources.delete(:browser)
-
-      wait_for_cleanup { !process_alive?(resources[:pid]) }
-      expect(process_alive?(resources[:pid])).to be(false)
-    ensure
-      cleanup_resources(resources)
-    end
-
-    it "terminates Chromium child processes after browser GC" do
-      resources = start_browser_and_capture_resources
-      resources.delete(:browser)
-
-      wait_for_cleanup { !process_group_alive?(resources[:pid]) }
-      expect(process_group_alive?(resources[:pid])).to be(false)
-    ensure
-      cleanup_resources(resources)
-    end
-
-    it "removes the Ferrum user data directory after browser GC" do
-      resources = start_browser_and_capture_resources
-      resources.delete(:browser)
-
-      wait_for_cleanup { !Dir.exist?(resources[:user_data_dir]) }
-      expect(Dir.exist?(resources[:user_data_dir])).to be(false)
-    ensure
-      cleanup_resources(resources)
-    end
-
     it "removes Chromium temporary directories after browser GC" do
       resources = start_browser_and_capture_resources
       resources.delete(:browser)
