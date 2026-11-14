@@ -417,6 +417,30 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       cleanup_resources(resources)
     end
 
+    it "stops both subscriber threads after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+      threads = resources[:subscriber_threads]
+
+      wait_for_cleanup { threads.none?(&:alive?) }
+      expect(threads).to all(satisfy { |thread| !thread.alive? })
+    ensure
+      cleanup_resources(resources)
+    end
+
+    it "stops the WebSocket writer and closes its outgoing queue after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+      writer = resources[:websocket_writer]
+      outgoing = resources[:websocket].instance_variable_get(:@outgoing)
+
+      wait_for_cleanup { !writer.alive? && outgoing.closed? }
+      expect(writer).not_to be_alive
+      expect(outgoing).to be_closed
+    ensure
+      cleanup_resources(resources)
+    end
+
     it "closes the WebSocket and stops its reader, writer and client threads after browser GC" do
       resources = start_browser_and_capture_resources
       resources.delete(:browser)
