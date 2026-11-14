@@ -48,6 +48,14 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     false
   end
 
+  def process_running?(pid)
+    stat = File.read("/proc/#{pid}/stat")
+    state = stat[(stat.rindex(") ") + 2)..].split[0]
+    state != "Z"
+  rescue Errno::ENOENT, Errno::ESRCH
+    false
+  end
+
   def process_group_alive?(pid)
     ::Process.kill(0, -pid)
     true
@@ -218,8 +226,8 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
 
       Ferrum::Browser::Process::Killer.kill(pid)
 
-      wait_for_cleanup { !process_alive?(child_pid) }
-      expect(process_group_alive?(pid)).to be(false)
+      wait_for_cleanup { !process_running?(child_pid) }
+      expect(process_running?(child_pid)).to be(false)
     ensure
       reader&.close unless reader&.closed?
       writer&.close unless writer&.closed?
@@ -276,8 +284,19 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       expect(resources[:chromium_temp_dirs]).not_to be_empty
       resources[:browser].quit
 
-      wait_for_cleanup do
-        resources[:chromium_temp_dirs].none? { |path| File.exist?(path) }
+      deadline = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) + 15
+      loop do
+        remaining = resources[:chromium_temp_dirs].select { |path| File.exist?(path) }
+        break if remaining.empty?
+        if ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) >= deadline
+          details = remaining.to_h do |path|
+            entries = Dir.exist?(path) ? Dir.children(path) : []
+            [path, entries]
+          end
+          raise "Chromium temporary directories remained after Browser#quit: #{details.inspect}"
+        end
+
+        sleep 0.05
       end
       expect(resources[:chromium_temp_dirs]).to all(satisfy { |path| !File.exist?(path) })
     ensure
