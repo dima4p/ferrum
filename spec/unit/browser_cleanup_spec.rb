@@ -311,26 +311,33 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
         resources = start_browser_and_capture_resources
         pid = resources[:pid]
         user_data_dir = resources[:user_data_dir]
+        chromium_temp_dirs = resources[:chromium_temp_dirs]
         captured = process_tree_snapshot(pid, user_data_dir)
         resources[:captured_processes] = captured
 
         resources[:browser].quit
 
         # Inspect immediately: waiting here would hide the race between the
-        # process-group SIGKILL and removal of the user-data directory.
+        # process-group SIGKILL and removal of browser-owned temporary files.
         surviving = surviving_processes(captured)
         running_group_members = process_snapshot.select do |process|
           process[:pgid] == pid && process[:state] != "Z"
         end
         user_data_dir_exists = Dir.exist?(user_data_dir)
+        remaining_temp_dirs = chromium_temp_dirs.select { |path| File.exist?(path) }
 
-        unless surviving.empty? && running_group_members.empty? && !user_data_dir_exists
+        unless surviving.empty? && running_group_members.empty? &&
+            !user_data_dir_exists && remaining_temp_dirs.empty?
+          temp_dir_details = remaining_temp_dirs.to_h do |path|
+            [path, Dir.exist?(path) ? Dir.children(path) : []]
+          end
           failures << {
             iteration: index + 1,
             browser_pid: pid,
             surviving_processes: surviving,
             running_group_members: running_group_members,
-            user_data_dir_exists: user_data_dir_exists
+            user_data_dir_exists: user_data_dir_exists,
+            chromium_temp_dirs: temp_dir_details
           }
         end
       ensure
