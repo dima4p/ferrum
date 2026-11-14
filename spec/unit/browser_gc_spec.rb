@@ -15,6 +15,7 @@ describe Ferrum::Browser, "GC cleanup", :launch,
       pid: process.pid,
       user_data_dir: user_data_dir,
       temp_dir: temp_dir,
+      chromium_temp_dirs: Dir.glob(File.join(temp_dir || Dir.tmpdir, "org.chromium.Chromium.*")),
       socket: web_socket.instance_variable_get(:@sock),
       reader: web_socket.instance_variable_get(:@thread),
       writer: web_socket.instance_variable_get(:@writer),
@@ -97,12 +98,16 @@ describe Ferrum::Browser, "GC cleanup", :launch,
     cleanup_resources(resources) if resources
   end
 
-  it "removes Chromium's temporary directory after browser GC" do
+  it "removes Chromium's temporary directories after browser GC" do
     resources = start_browser_and_capture_resources
-    temp_dir = resources[:temp_dir]
-    expect(temp_dir).not_to be_nil
-    wait_for_gc_cleanup { !Dir.exist?(temp_dir) }
-    expect(Dir.exist?(temp_dir)).to be(false)
+    chromium_temp_dirs = resources[:chromium_temp_dirs]
+    expect(chromium_temp_dirs).not_to be_empty
+    wait_for_gc_cleanup do
+      chromium_temp_dirs.none? { |path| File.exist?(path) } &&
+        !Dir.exist?(resources[:temp_dir])
+    end
+    expect(chromium_temp_dirs).to all(satisfy { |path| !File.exist?(path) })
+    expect(Dir.exist?(resources[:temp_dir])).to be(false)
   ensure
     cleanup_resources(resources) if resources
   end
