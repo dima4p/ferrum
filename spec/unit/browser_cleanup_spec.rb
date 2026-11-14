@@ -234,24 +234,42 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       cleanup_resources(resources)
     end
 
-    it "does not leave Chromium processes behind across repeated browser lifecycles" do
-      iterations = Integer(ENV.fetch("FERRUM_CLEANUP_STRESS_ITERATIONS", "55"))
-      leftovers = []
+    it "reliably terminates Chromium and removes its user data directory across repeated browser lifecycles" do
+      iterations = Integer(ENV.fetch("FERRUM_CLEANUP_STRESS_ITERATIONS", "100"))
+      failures = []
 
       iterations.times do |index|
         resources = start_browser_and_capture_resources
-        captured = process_tree_snapshot(resources[:pid], resources[:user_data_dir])
+        pid = resources[:pid]
+        user_data_dir = resources[:user_data_dir]
+        captured = process_tree_snapshot(pid, user_data_dir)
         resources[:captured_processes] = captured
+
         resources[:browser].quit
 
-        remaining = surviving_processes(captured)
-        leftovers << { iteration: index + 1, browser_pid: resources[:pid], processes: remaining } unless remaining.empty?
+        # Inspect immediately: waiting here would hide the race between the
+        # process-group SIGKILL and removal of the user-data directory.
+        surviving = surviving_processes(captured)
+        group_alive = process_group_alive?(pid)
+        user_data_dir_exists = Dir.exist?(user_data_dir)
+
+        unless surviving.empty? && !group_alive && !user_data_dir_exists
+          failures << {
+            iteration: index + 1,
+            browser_pid: pid,
+            surviving_processes: surviving,
+            process_group_alive: group_alive,
+            user_data_dir_exists: user_data_dir_exists
+          }
+        end
       ensure
+        # Keep the observations above, then clean up only to avoid contaminating
+        # subsequent examples. Never use this cleanup to determine pass/fail.
         cleanup_resources(resources)
       end
 
-      expect(leftovers).to be_empty,
-        "Chromium processes survived Browser#quit: #{leftovers.inspect}"
+      expect(failures).to be_empty,
+        "Browser#quit left resources behind during stress run: #{failures.inspect}"
     end
   end
 
