@@ -33,7 +33,10 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       client_reader: client.instance_variable_get(:@thread),
       subscriber_threads: %i[@regular_thread @priority_thread].map do |name|
         subscriber.instance_variable_get(name)
-      end
+      end,
+      websocket: web_socket,
+      client: client,
+      subscriber: subscriber
     }
   end
 
@@ -205,6 +208,18 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       cleanup_resources(resources)
     end
 
+    it "uses a browser-specific TMPDIR for Chromium on Linux" do
+      resources = start_browser_and_capture_resources
+      environment = File.read("/proc/#{resources[:pid]}/environ").split("\0")
+      temp_dir = environment.find { |entry| entry.start_with?("TMPDIR=") }&.delete_prefix("TMPDIR=")
+
+      expect(temp_dir).not_to be_nil
+      expect(temp_dir).to start_with("#{resources[:user_data_dir]}/")
+      expect(Dir.exist?(temp_dir)).to be(true)
+    ensure
+      cleanup_resources(resources)
+    end
+
     it "removes Chromium temporary directories" do
       resources = start_browser_and_capture_resources
       expect(resources[:chromium_temp_dirs]).not_to be_empty
@@ -233,6 +248,54 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
 
       expect(leftovers).to be_empty,
         "Chromium processes survived Browser#quit: #{leftovers.inspect}"
+    end
+  end
+
+  describe "process-group cleanup after the leader was reaped" do
+    it "kills remaining Chromium children when Process.wait raises ECHILD" do
+      reader, writer = IO.pipe
+      script = <<~'RUBY'
+        reader = IO.for_fd(ARGV[0].to_i)
+        writer = IO.for_fd(ARGV[1].to_i)
+        Signal.trap("TERM") { exit! }
+        child = fork do
+          reader.close
+          Signal.trap("TERM", "IGNORE")
+          writer.write("#{Process.pid}\\n")
+          writer.flush
+          writer.close
+          sleep
+        end
+        writer.close
+        sleep
+      RUBY
+      pid = ::Process.spawn(RbConfig.ruby, "-e", script, reader.fileno.to_s, writer.fileno.to_s,
+        pgroup: true, close_others: false, in: File::NULL, out: File::NULL, err: File::NULL)
+      writer.close
+      child_pid = Integer(reader.gets)
+      reader.close
+
+      ::Process.kill("TERM", pid)
+      ::Process.wait(pid)
+      expect(process_alive?(child_pid)).to be(true)
+
+      Ferrum::Browser::Process::Killer.kill(pid)
+
+      wait_for_cleanup { !process_alive?(child_pid) }
+      expect(process_group_alive?(pid)).to be(false)
+    ensure
+      reader&.close unless reader&.closed?
+      writer&.close unless writer&.closed?
+      begin
+        ::Process.kill("KILL", -pid) if pid
+      rescue Errno::ESRCH
+        nil
+      end
+      begin
+        ::Process.wait(pid) if pid
+      rescue Errno::ECHILD, Errno::ESRCH
+        nil
+      end
     end
   end
 
@@ -305,6 +368,71 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       wait_for_cleanup { client_resources_closed?(resources) }
       expect(resources[:socket]).to be_closed
       expect(client_threads(resources)).to all(satisfy { |thread| !thread.alive? })
+    ensure
+      cleanup_resources(resources)
+    end
+
+    it "closes the WebSocket socket after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+
+      wait_for_cleanup { resources[:socket].closed? }
+      expect(resources[:socket]).to be_closed
+    ensure
+      cleanup_resources(resources)
+    end
+
+    it "stops the WebSocket reader thread after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+      thread = resources[:websocket_reader]
+
+      wait_for_cleanup { !thread.alive? }
+      expect(thread).not_to be_alive
+    ensure
+      cleanup_resources(resources)
+    end
+
+    it "stops the WebSocket writer thread after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+      thread = resources[:websocket_writer]
+
+      wait_for_cleanup { !thread.alive? }
+      expect(thread).not_to be_alive
+    ensure
+      cleanup_resources(resources)
+    end
+
+    it "stops the client dispatch thread after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+      thread = resources[:client_reader]
+
+      wait_for_cleanup { !thread.alive? }
+      expect(thread).not_to be_alive
+    ensure
+      cleanup_resources(resources)
+    end
+
+    it "stops the regular subscriber thread after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+      thread = resources[:subscriber_threads][0]
+
+      wait_for_cleanup { !thread.alive? }
+      expect(thread).not_to be_alive
+    ensure
+      cleanup_resources(resources)
+    end
+
+    it "stops the priority subscriber thread after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+      thread = resources[:subscriber_threads][1]
+
+      wait_for_cleanup { !thread.alive? }
+      expect(thread).not_to be_alive
     ensure
       cleanup_resources(resources)
     end
