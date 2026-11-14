@@ -107,6 +107,13 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     end
   end
 
+  def process_starttime(pid)
+    stat = File.read("/proc/#{pid}/stat")
+    stat[(stat.rindex(") ") + 2)..].split[19]
+  rescue Errno::ENOENT, Errno::ESRCH
+    nil
+  end
+
   def client_threads(resources)
     [
       resources[:websocket_reader],
@@ -122,6 +129,18 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
 
   def cleanup_resources(resources)
     return unless resources
+
+    # Kill any captured descendants individually as a safety net. They may
+    # have escaped the browser's original process group after the snapshot.
+    (resources[:captured_processes] || []).each do |process|
+      next unless process_starttime(process[:pid]) == process[:starttime]
+
+      begin
+        ::Process.kill("KILL", process[:pid])
+      rescue Errno::ESRCH
+        nil
+      end
+    end
 
     pid = resources[:pid]
     begin
@@ -162,6 +181,7 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       iterations.times do |index|
         resources = start_browser_and_capture_resources
         captured = process_tree_snapshot(resources[:pid])
+        resources[:captured_processes] = captured
         resources[:browser].quit
 
         remaining = surviving_processes(captured)
@@ -183,6 +203,7 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       iterations.times do |index|
         resources = start_browser_and_capture_resources
         captured = process_tree_snapshot(resources[:pid])
+        resources[:captured_processes] = captured
         resources.delete(:browser)
 
         wait_for_cleanup { surviving_processes(captured).empty? }
