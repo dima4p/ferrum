@@ -261,7 +261,7 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
         child = fork do
           reader.close
           Signal.trap("TERM", "IGNORE")
-          writer.write("#{Process.pid}\\n")
+          writer.write("#{Process.pid}\n")
           writer.flush
           writer.close
           sleep
