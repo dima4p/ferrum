@@ -176,6 +176,26 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
   end
 
   describe "Browser GC" do
+    it "does not leave Chromium processes behind across repeated browser GC cycles" do
+      iterations = Integer(ENV.fetch("FERRUM_CLEANUP_STRESS_ITERATIONS", "55"))
+      leftovers = []
+
+      iterations.times do |index|
+        resources = start_browser_and_capture_resources
+        captured = process_tree_snapshot(resources[:pid])
+        resources.delete(:browser)
+
+        wait_for_cleanup { surviving_processes(captured).empty? }
+        remaining = surviving_processes(captured)
+        leftovers << { iteration: index + 1, browser_pid: resources[:pid], processes: remaining } unless remaining.empty?
+      ensure
+        cleanup_resources(resources)
+      end
+
+      expect(leftovers).to be_empty,
+        "Chromium processes survived browser GC: #{leftovers.inspect}"
+    end
+
     it "removes Chromium temporary directories after browser GC" do
       resources = start_browser_and_capture_resources
       resources.delete(:browser)
