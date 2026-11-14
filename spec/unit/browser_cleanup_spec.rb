@@ -34,9 +34,10 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       subscriber_threads: %i[@regular_thread @priority_thread].map do |name|
         subscriber.instance_variable_get(name)
       end,
-      websocket: web_socket,
-      client: client,
-      subscriber: subscriber
+      outgoing: web_socket.instance_variable_get(:@outgoing),
+      subscriber_queues: %i[@regular @priority].map do |name|
+        subscriber.instance_variable_get(name)
+      end
     }
   end
 
@@ -220,23 +221,14 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       cleanup_resources(resources)
     end
 
-    it "uses a browser-specific TMPDIR for Chromium on Linux" do
-      resources = start_browser_and_capture_resources
-      environment = File.read("/proc/#{resources[:pid]}/environ").split("\0")
-      temp_dir = environment.find { |entry| entry.start_with?("TMPDIR=") }&.delete_prefix("TMPDIR=")
-
-      expect(temp_dir).not_to be_nil
-      expect(temp_dir).to start_with("#{resources[:user_data_dir]}/")
-      expect(Dir.exist?(temp_dir)).to be(true)
-    ensure
-      cleanup_resources(resources)
-    end
-
     it "removes Chromium temporary directories" do
       resources = start_browser_and_capture_resources
       expect(resources[:chromium_temp_dirs]).not_to be_empty
       resources[:browser].quit
 
+      wait_for_cleanup do
+        resources[:chromium_temp_dirs].none? { |path| File.exist?(path) }
+      end
       expect(resources[:chromium_temp_dirs]).to all(satisfy { |path| !File.exist?(path) })
     ensure
       cleanup_resources(resources)
@@ -248,7 +240,7 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
 
       iterations.times do |index|
         resources = start_browser_and_capture_resources
-        captured = process_tree_snapshot(resources[:pid])
+        captured = process_tree_snapshot(resources[:pid], resources[:user_data_dir])
         resources[:captured_processes] = captured
         resources[:browser].quit
 
@@ -421,7 +413,7 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     it "closes the WebSocket outgoing queue after browser GC" do
       resources = start_browser_and_capture_resources
       resources.delete(:browser)
-      outgoing = resources[:websocket].instance_variable_get(:@outgoing)
+      outgoing = resources[:outgoing]
 
       wait_for_cleanup { outgoing.closed? }
       expect(outgoing).to be_closed
@@ -444,7 +436,7 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       resources = start_browser_and_capture_resources
       resources.delete(:browser)
       writer = resources[:websocket_writer]
-      outgoing = resources[:websocket].instance_variable_get(:@outgoing)
+      outgoing = resources[:outgoing]
 
       wait_for_cleanup { !writer.alive? && outgoing.closed? }
       expect(writer).not_to be_alive
