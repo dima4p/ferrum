@@ -5,22 +5,27 @@ require "tmpdir"
 describe Ferrum::Browser, "cleanup lifecycle", :launch,
   if: Ferrum::Utils::Platform.mri? && !Ferrum::Utils::Platform.windows? do
   def start_browser_and_capture_resources
+    chromium_temp_dirs_before = Dir.glob(File.join(Dir.tmpdir, "org.chromium.Chromium.*"))
     browser = Ferrum::Browser.new
     process = browser.process
     client = browser.client
     web_socket = client.instance_variable_get(:@ws)
     subscriber = client.subscriber
-    temp_root = process.instance_variable_get(:@temp_dir) || Dir.tmpdir
-    chromium_temp_dirs_before = Dir.glob(File.join(temp_root, "org.chromium.Chromium.*"))
+    user_data_dir = process.instance_variable_get(:@user_data_dir)
 
-    # Chromium may create its temporary directory asynchronously during startup.
-    sleep 0.1
-    chromium_temp_dirs = Dir.glob(File.join(temp_root, "org.chromium.Chromium.*")) - chromium_temp_dirs_before
+    # Support both Chromium's system temp directory and Ferrum's isolated temp directory.
+    chromium_temp_dirs = (
+      Dir.glob(File.join(Dir.tmpdir, "org.chromium.Chromium.*")) - chromium_temp_dirs_before
+    )
+    if user_data_dir
+      chromium_temp_dirs.concat(Dir.glob(File.join(user_data_dir, "**", "org.chromium.Chromium.*")))
+    end
+    chromium_temp_dirs.uniq!
 
     resources = {
       browser: browser,
       pid: process.pid,
-      user_data_dir: process.instance_variable_get(:@user_data_dir),
+      user_data_dir: user_data_dir,
       chromium_temp_dirs: chromium_temp_dirs,
       socket: web_socket.instance_variable_get(:@sock),
       websocket_reader: web_socket.instance_variable_get(:@thread),
