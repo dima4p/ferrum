@@ -250,15 +250,17 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
         # Inspect immediately: waiting here would hide the race between the
         # process-group SIGKILL and removal of the user-data directory.
         surviving = surviving_processes(captured)
-        group_alive = process_group_alive?(pid)
+        running_group_members = process_snapshot.select do |process|
+          process[:pgid] == pid && process[:state] != "Z"
+        end
         user_data_dir_exists = Dir.exist?(user_data_dir)
 
-        unless surviving.empty? && !group_alive && !user_data_dir_exists
+        unless surviving.empty? && running_group_members.empty? && !user_data_dir_exists
           failures << {
             iteration: index + 1,
             browser_pid: pid,
             surviving_processes: surviving,
-            process_group_alive: group_alive,
+            running_group_members: running_group_members,
             user_data_dir_exists: user_data_dir_exists
           }
         end
