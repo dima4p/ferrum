@@ -363,6 +363,60 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       cleanup_resources(resources)
     end
 
+    it "closes the WebSocket socket after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+
+      wait_for_cleanup { resources[:socket].closed? }
+      expect(resources[:socket]).to be_closed
+    ensure
+      cleanup_resources(resources)
+    end
+
+    it "stops the WebSocket writer thread after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+      thread = resources[:websocket_writer]
+
+      wait_for_cleanup { !thread.alive? }
+      expect(thread).not_to be_alive
+    ensure
+      cleanup_resources(resources)
+    end
+
+    it "stops the regular subscriber thread after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+      thread = resources[:subscriber_threads][0]
+
+      wait_for_cleanup { !thread.alive? }
+      expect(thread).not_to be_alive
+    ensure
+      cleanup_resources(resources)
+    end
+
+    it "stops the priority subscriber thread after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+      thread = resources[:subscriber_threads][1]
+
+      wait_for_cleanup { !thread.alive? }
+      expect(thread).not_to be_alive
+    ensure
+      cleanup_resources(resources)
+    end
+
+    it "closes the WebSocket outgoing queue after browser GC" do
+      resources = start_browser_and_capture_resources
+      resources.delete(:browser)
+      outgoing = resources[:websocket].instance_variable_get(:@outgoing)
+
+      wait_for_cleanup { outgoing.closed? }
+      expect(outgoing).to be_closed
+    ensure
+      cleanup_resources(resources)
+    end
+
     it "closes the WebSocket and stops its reader, writer and client threads after browser GC" do
       resources = start_browser_and_capture_resources
       resources.delete(:browser)
