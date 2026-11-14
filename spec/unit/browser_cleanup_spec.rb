@@ -48,12 +48,12 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
     end
   end
 
-  def process_group_snapshot(pgid)
+  # Read /proc while the browser is still alive. This records descendants even
+  # if Chromium later reparents them or they move into another process group.
+  def process_snapshot
     Dir.glob("/proc/[0-9]*/stat").filter_map do |path|
       stat = File.read(path)
       fields = stat[(stat.rindex(") ") + 2)..].split
-      next unless fields[2].to_i == pgid
-
       pid = File.basename(File.dirname(path)).to_i
       cmdline = File.read("/proc/#{pid}/cmdline").tr("\0", " ").strip
       {
@@ -61,8 +61,47 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
         state: fields[0],
         ppid: fields[1].to_i,
         pgid: fields[2].to_i,
+        starttime: fields[19],
         command: cmdline
       }
+    rescue Errno::ENOENT, Errno::ESRCH
+      nil
+    end
+  end
+
+  def process_tree_snapshot(root_pid)
+    table = process_snapshot
+    by_ppid = table.group_by { |process| process[:ppid] }
+    descendants = []
+    pending = [root_pid]
+    seen = {}
+
+    until pending.empty?
+      parent_pid = pending.shift
+      next if seen[parent_pid]
+
+      seen[parent_pid] = true
+      children = by_ppid.fetch(parent_pid, [])
+      descendants.concat(children)
+      pending.concat(children.map { |process| process[:pid] })
+    end
+
+    root = table.find { |process| process[:pid] == root_pid }
+    [root, *descendants].compact.uniq { |process| process[:pid] }
+  end
+
+  # Match PID and start time to avoid mistaking a reused PID for the original
+  # Chromium process. Zombies are reported separately but are no longer running.
+  def surviving_processes(captured)
+    captured.filter_map do |process|
+      path = "/proc/#{process[:pid]}/stat"
+      stat = File.read(path)
+      fields = stat[(stat.rindex(") ") + 2)..].split
+      next unless fields[19] == process[:starttime]
+      next if fields[0] == "Z"
+
+      cmdline = File.read("/proc/#{process[:pid]}/cmdline").tr("\0", " ").strip
+      process.merge(state: fields[0], current_ppid: fields[1].to_i, command: cmdline)
     rescue Errno::ENOENT, Errno::ESRCH
       nil
     end
@@ -122,11 +161,11 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
 
       iterations.times do |index|
         resources = start_browser_and_capture_resources
-        pid = resources[:pid]
+        captured = process_tree_snapshot(resources[:pid])
         resources[:browser].quit
 
-        remaining = process_group_snapshot(pid)
-        leftovers << { iteration: index + 1, browser_pid: pid, processes: remaining } unless remaining.empty?
+        remaining = surviving_processes(captured)
+        leftovers << { iteration: index + 1, browser_pid: resources[:pid], processes: remaining } unless remaining.empty?
       ensure
         cleanup_resources(resources)
       end
