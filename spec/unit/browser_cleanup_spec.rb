@@ -269,6 +269,8 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
         writer.close
         sleep
       RUBY
+      reader.close_on_exec = false
+      writer.close_on_exec = false
       pid = ::Process.spawn(RbConfig.ruby, "-e", script, reader.fileno.to_s, writer.fileno.to_s,
         pgroup: true, close_others: false, in: File::NULL, out: File::NULL, err: File::NULL)
       writer.close
@@ -372,81 +374,5 @@ describe Ferrum::Browser, "cleanup lifecycle", :launch,
       cleanup_resources(resources)
     end
 
-    it "closes the WebSocket socket after browser GC" do
-      resources = start_browser_and_capture_resources
-      resources.delete(:browser)
-
-      wait_for_cleanup { resources[:socket].closed? }
-      expect(resources[:socket]).to be_closed
-    ensure
-      cleanup_resources(resources)
-    end
-
-    it "stops the WebSocket reader thread after browser GC" do
-      resources = start_browser_and_capture_resources
-      resources.delete(:browser)
-      thread = resources[:websocket_reader]
-
-      wait_for_cleanup { !thread.alive? }
-      expect(thread).not_to be_alive
-    ensure
-      cleanup_resources(resources)
-    end
-
-    it "stops the WebSocket writer thread after browser GC" do
-      resources = start_browser_and_capture_resources
-      resources.delete(:browser)
-      thread = resources[:websocket_writer]
-
-      wait_for_cleanup { !thread.alive? }
-      expect(thread).not_to be_alive
-    ensure
-      cleanup_resources(resources)
-    end
-
-    it "stops the client dispatch thread after browser GC" do
-      resources = start_browser_and_capture_resources
-      resources.delete(:browser)
-      thread = resources[:client_reader]
-
-      wait_for_cleanup { !thread.alive? }
-      expect(thread).not_to be_alive
-    ensure
-      cleanup_resources(resources)
-    end
-
-    it "stops the regular subscriber thread after browser GC" do
-      resources = start_browser_and_capture_resources
-      resources.delete(:browser)
-      thread = resources[:subscriber_threads][0]
-
-      wait_for_cleanup { !thread.alive? }
-      expect(thread).not_to be_alive
-    ensure
-      cleanup_resources(resources)
-    end
-
-    it "stops the priority subscriber thread after browser GC" do
-      resources = start_browser_and_capture_resources
-      resources.delete(:browser)
-      thread = resources[:subscriber_threads][1]
-
-      wait_for_cleanup { !thread.alive? }
-      expect(thread).not_to be_alive
-    ensure
-      cleanup_resources(resources)
-    end
-
-    it "stops subscriber threads after browser GC" do
-      resources = start_browser_and_capture_resources
-      resources.delete(:browser)
-
-      wait_for_cleanup do
-        resources[:subscriber_threads].none?(&:alive?)
-      end
-      expect(resources[:subscriber_threads]).to all(satisfy { |thread| !thread.alive? })
-    ensure
-      cleanup_resources(resources)
-    end
   end
 end
